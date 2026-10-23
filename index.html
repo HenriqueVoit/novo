@@ -7,6 +7,8 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <title>Aclara Unhas · Agendamento</title>
 <style>
 html{color-scheme:light}
@@ -128,6 +130,8 @@ td,th{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left}
     <div id="tabF" hidden>
       <div class="row" style="margin-bottom:10px"><button class="day sel" id="f1" style="min-width:0">Resumo</button><button class="day" id="f2" style="min-width:0">Custos</button></div>
       <div class="row" style="align-items:center"><button class="day" id="mprev">‹</button><b id="mlabel" style="flex:1;text-align:center"></b><button class="day" id="mnext">›</button></div>
+      <button class="go" id="pdfbtn" style="margin:10px 0">Exportar resultado mensal (PDF)</button>
+      <div id="pdfmsg"></div>
       <div id="fA">
       <div class="kpis">
         <div class="kpi"><small>Já ganho no mês</small><b id="k1"></b><small id="k1s"></small></div>
@@ -201,7 +205,8 @@ function aplicar(l){
   PRECOS=Object.fromEntries(SERVICOS.map(x=>[x.nome,x.v]));
   if(st.svc&&!SERVICOS.some(x=>x.id===st.svc)){st.svc=null;st.hora=null}
 }
-const HORAS=[];[9,10,11,13,14,15,16,17].forEach(h=>["00","30"].forEach(m=>HORAS.push(String(h).padStart(2,"0")+":"+m)));
+const HORAS=[];[9,10,11,13,14,15,16,17,18].forEach(h=>["00","30"].forEach(m=>HORAS.push(String(h).padStart(2,"0")+":"+m)));
+HORAS.splice(HORAS.indexOf("11:30"),1);
 const MIN=h=>parseInt(h)*60+parseInt(h.slice(3));
 const R=v=>v.toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
 const fim=m=>String(Math.floor(m/60)).padStart(2,"0")+":"+String(m%60).padStart(2,"0");
@@ -341,6 +346,100 @@ function renderCal(y,m,cd,R){
     });
   }
 }
+
+function exportarPDF(){
+  const msg=$("pdfmsg");msg.className="msg";msg.textContent="";
+  if(!(window.jspdf&&window.jspdf.jsPDF)){msg.textContent="Não foi possível carregar o gerador de PDF. Verifique a internet e tente de novo.";return}
+  try{
+    const ano=Math.floor(st.mes/12),mo=st.mes%12,key=ano+"-"+String(mo+1).padStart(2,"0"),now=new Date();
+    const NM=["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
+    const M=v=>R(v).replace(/ /g," ");
+    const pagos=[],aberto=[],pend=[],por={};
+    st.books.filter(x=>x.dia.slice(0,7)===key).sort((a,b)=>(a.dia+a.hora).localeCompare(b.dia+b.hora)).forEach(x=>{
+      const v=x.valor!=null?x.valor:(PRECOS[x.servico]||0);
+      if(x.status==="pendente"){pend.push({x,v});return}
+      const pago=x.pago!=null?x.pago:(new Date(x.dia+"T"+x.hora)<=now);
+      (pago?pagos:aberto).push({x,v});
+      const p=(por[x.servico]=por[x.servico]||{n:0,v:0});p.n++;p.v+=v;
+    });
+    const custos=st.custos.filter(c=>(c.dia||"").slice(0,7)===key).sort((a,b)=>a.dia.localeCompare(b.dia));
+    const soma=l=>l.reduce((t,i)=>t+i.v,0);
+    const tRec=soma(pagos),tAb=soma(aberto),tCus=custos.reduce((t,c)=>t+(c.valor||0),0);
+    const doc=new window.jspdf.jsPDF({unit:"mm",format:"a4"});
+    const W=210,L=14,CW=W-2*L,VERDE=[63,90,28],CINZA=[95,106,85];
+    let y=18;
+    doc.setFont("helvetica","bold");doc.setFontSize(20);doc.setTextColor(29,36,24);doc.text(TITULO,L,y);
+    y+=8;doc.setFont("helvetica","normal");doc.setFontSize(12);doc.setTextColor(...CINZA);
+    doc.text("Resultado de "+NM[mo]+" de "+ano,L,y);
+    doc.setFontSize(9);doc.text("Gerado em "+now.toLocaleDateString("pt-BR")+" às "+now.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}),W-L,y,{align:"right"});
+    y+=6;doc.setDrawColor(...VERDE);doc.setLineWidth(.6);doc.line(L,y,W-L,y);y+=8;
+
+    // resumo
+    const caixas=[["Recebido",M(tRec),pagos.length+" atendimento(s)"],["A receber",M(tAb),aberto.length+" atendimento(s)"],["Gastos",M(tCus),custos.length+" item(ns)"],["Lucro (recebido - gastos)",M(tRec-tCus),""]];
+    const bw=(CW-9)/4;
+    caixas.forEach((c,i)=>{
+      const x=L+i*(bw+3);
+      doc.setDrawColor(216,214,198);doc.setLineWidth(.3);doc.roundedRect(x,y,bw,22,2,2);
+      doc.setFont("helvetica","normal");doc.setFontSize(8);doc.setTextColor(...CINZA);doc.text(c[0],x+3,y+6);
+      doc.setFont("helvetica","bold");doc.setFontSize(12);doc.setTextColor(29,36,24);doc.text(c[1],x+3,y+13.5);
+      doc.setFont("helvetica","normal");doc.setFontSize(8);doc.setTextColor(...CINZA);if(c[2])doc.text(c[2],x+3,y+19);
+    });
+    y+=30;
+
+    const secao=(t,sub)=>{
+      if(y>255){doc.addPage();y=18}
+      doc.setFont("helvetica","bold");doc.setFontSize(13);doc.setTextColor(...VERDE);doc.text(t,L,y);
+      if(sub){doc.setFont("helvetica","normal");doc.setFontSize(9);doc.setTextColor(...CINZA);doc.text(sub,W-L,y,{align:"right"})}
+      y+=3;
+    };
+    const tabela=(cab,corpo,vazio,foot)=>{
+      doc.autoTable({startY:y,head:[cab],body:corpo.length?corpo:[[{content:vazio,colSpan:cab.length,styles:{halign:"center",textColor:CINZA}}]],
+        foot:foot?[foot]:undefined,margin:{left:L,right:L},theme:"grid",
+        styles:{font:"helvetica",fontSize:9,cellPadding:2,lineColor:[216,214,198],lineWidth:.2},
+        headStyles:{fillColor:VERDE,textColor:255},footStyles:{fillColor:[233,232,214],textColor:[29,36,24],fontStyle:"bold"},
+        columnStyles:{[cab.length-1]:{halign:"right"}}});
+      y=doc.lastAutoTable.finalY+9;
+    };
+    const linhas=l=>l.map(i=>[br(i.x.dia),i.x.hora,i.x.nome||"-",i.x.servico||"-",i.v?M(i.v):"a combinar"]);
+    const cabC=["Dia","Hora","Cliente","Serviço","Valor"];
+
+    secao("Clientes que pagaram",pagos.length+" atendimento(s)");
+    tabela(cabC,linhas(pagos),"Nenhum pagamento no mês.",["","","","Total recebido",M(tRec)]);
+    secao("Clientes que faltam pagar",aberto.length+" atendimento(s)");
+    tabela(cabC,linhas(aberto),"Nenhum valor pendente.",["","","","Total a receber",M(tAb)]);
+    if(pend.length){secao("Pedidos aguardando aceite (fora das somas)",pend.length+" pedido(s)");tabela(cabC,linhas(pend),"")}
+    secao("Gastos do mês",custos.length+" item(ns)");
+    tabela(["Data","Item","Valor"],custos.map(c=>[br(c.dia),c.desc||"-",M(c.valor||0)]),"Nenhum gasto registrado no mês.",["","Total de gastos",M(tCus)]);
+
+    // gráficos de barras horizontais
+    const grafico=(titulo,itens,fmt)=>{
+      const altura=14+itens.length*9;
+      if(y+altura>280){doc.addPage();y=18}
+      doc.setFont("helvetica","bold");doc.setFontSize(13);doc.setTextColor(...VERDE);doc.text(titulo,L,y);y+=7;
+      if(!itens.length){doc.setFont("helvetica","normal");doc.setFontSize(9);doc.setTextColor(...CINZA);doc.text("Sem atendimentos no mês.",L,y);y+=10;return}
+      const max=Math.max(...itens.map(i=>i.v))||1,lw=62,bx=L+lw,bmax=CW-lw-26;
+      itens.forEach(i=>{
+        doc.setFont("helvetica","normal");doc.setFontSize(9);doc.setTextColor(29,36,24);
+        doc.text(doc.splitTextToSize(i.l,lw-3)[0],L,y+4.5);
+        const w=Math.max(.8,i.v/max*bmax);
+        doc.setFillColor(...VERDE);doc.rect(bx,y,w,6,"F");
+        doc.setFont("helvetica","bold");doc.text(fmt(i.v),bx+w+2,y+4.5);
+        y+=9;
+      });
+      y+=5;
+    };
+    const ordem=Object.keys(por).map(n=>({l:n,n:por[n].n,v:por[n].v}));
+    grafico("Serviços mais pedidos (quantidade)",ordem.slice().sort((a,b)=>b.n-a.n).map(i=>({l:i.l,v:i.n})),v=>v+(v===1?" atendimento":" atendimentos"));
+    grafico("Receita por serviço",ordem.slice().sort((a,b)=>b.v-a.v).map(i=>({l:i.l,v:i.v})),v=>M(v));
+
+    // rodapé com numeração
+    const np=doc.getNumberOfPages();
+    for(let p=1;p<=np;p++){doc.setPage(p);doc.setFont("helvetica","normal");doc.setFontSize(8);doc.setTextColor(...CINZA);doc.text(TITULO+" · "+NM[mo]+" de "+ano+" · página "+p+" de "+np,W/2,291,{align:"center"})}
+    doc.save("resultado-"+key+".pdf");
+    msg.textContent="PDF gerado: resultado-"+key+".pdf";
+  }catch(e){msg.textContent="Não foi possível gerar o PDF agora."}
+}
+$("pdfbtn").onclick=exportarPDF;
 function aba(n){
   [["tabA","t1",1],["tabF","t2",2],["tabS","t3",3]].forEach(([d,b,i])=>{$(d).hidden=i!==n;$(b).className="day"+(i===n?" sel":"")});
   if(n===2)renderFin();
