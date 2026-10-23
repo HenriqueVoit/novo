@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#141a10">
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <title>Aclara Unhas · Agendamento</title>
 <style>
 html{color-scheme:light}
@@ -158,6 +161,7 @@ td,th{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left}
   <p style="text-align:center"><button class="day" id="abrirlogin" style="min-width:0">Área da manicure</button></p>
   <section id="login" hidden>
     <h2 id="ltitulo">Área da manicure</h2>
+    <input id="email" type="email" placeholder="E-mail da manicure" autocomplete="username">
     <input id="senha" type="password" placeholder="Senha" autocomplete="current-password">
     <button class="go" id="entrar">Entrar</button>
     <div id="lmsg"></div>
@@ -165,6 +169,15 @@ td,th{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left}
 </main>
 
 <script>
+/* COLE AQUI a configuração do seu app web do Firebase (Configurações do projeto > Seus apps). */
+const FIREBASE_CONFIG={
+  apiKey:"AIzaSyASRFxD_3itEKvHMPE9dNnjY6ysVASKEHM",
+  authDomain:"manicure-a5c09.firebaseapp.com",
+  projectId:"manicure-a5c09",
+  storageBucket:"manicure-a5c09.firebasestorage.app",
+  messagingSenderId:"303639453235",
+  appId:"1:303639453235:web:e987edaa449404411a8d46"
+};
 const PADRAO=[
   {id:"pe",nome:"Pedicure (pés)",v:40,min:60},
   {id:"gelpe",nome:"Esmaltação em gel (pés)",v:100,min:60},
@@ -196,7 +209,7 @@ const NOMES_DIA=["dom","seg","ter","qua","qui","sex","sáb"];
 const MESES=["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
 const $=id=>document.getElementById(id);
 const st={svc:null,dia:null,hora:null,adia:null,books:[],stat:{},step:1,custos:[],edit:null,dirty:false,rec:0,mes:new Date().getFullYear()*12+new Date().getMonth(),ocupados:new Set(),bloq:new Set()};
-let db=null,user=null;
+let db=null,auth=null;
 aplicar(PADRAO);
 
 function iso(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")}
@@ -392,21 +405,18 @@ $("cadd").onclick=async()=>{
 };
 $("mprev").onclick=()=>{st.mes--;renderFin()};
 $("mnext").onclick=()=>{st.mes++;renderFin()};
-const SAL="aclara-unhas-v1:";
-async function hash(s){const b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(SAL+s));return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,"0")).join("")}
-const HASH="ad32682f0c25c368b43f580c92c6f0742c1125a05610c967f4fcd5377b9d359d";
 $("abrirlogin").onclick=()=>{$("login").hidden=false;$("senha").value="";$("lmsg").className="";$("lmsg").textContent="";$("senha").focus()};
 $("senha").onkeydown=e=>{if(e.key==="Enter")$("entrar").click()};
 $("entrar").onclick=async()=>{
   const m=$("lmsg");m.className="msg";
+  if(!db||!auth){m.textContent="Sem conexão com os dados agora. Tente de novo em instantes.";return}
   try{
-    if(await hash($("senha").value)!==HASH){m.textContent="Senha incorreta.";return}
-    if(!db){m.textContent="Sem conexão com os dados agora. Tente de novo em instantes.";return}
+    await auth.signInWithEmailAndPassword($("email").value.trim(),$("senha").value);
     $("login").hidden=true;$("senha").value="";m.className="";m.textContent="";
     abrirPainel();
-  }catch(e){m.textContent="Não foi possível entrar agora."}
+  }catch(e){m.textContent="E-mail ou senha incorretos."}
 };
-$("sair").onclick=()=>{$("admin").hidden=true;window.scrollTo(0,0)};
+$("sair").onclick=()=>{$("admin").hidden=true;window.scrollTo(0,0);if(auth)auth.signOut().then(()=>location.reload(),()=>location.reload())};
 $("bd").onclick=()=>mexer(true);
 $("ld").onclick=()=>mexer(false);
 $("nome").oninput=$("tel").oninput=render;
@@ -543,7 +553,12 @@ function abrirPainel(){
     db.collection("custos").onSnapshot(q=>{st.custos=q.docs.map(d=>Object.assign({id:String(d.id).split("/").pop()},d.data()));renderCustos();renderFin()},()=>{});
 }
 (async()=>{
-  try{user=await claude.use("user");db=await claude.use("db");if(db)ouvir()}catch(e){}
+  try{
+    if(!FIREBASE_CONFIG.apiKey||FIREBASE_CONFIG.apiKey.indexOf("COLE")===0)return;
+    firebase.initializeApp(FIREBASE_CONFIG);
+    db=firebase.firestore();auth=firebase.auth();
+    ouvir();
+  }catch(e){}
 })();
 render();ir(1);
 </script>
